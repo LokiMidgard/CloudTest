@@ -31,11 +31,9 @@ int main()
 
 	std::wstring name = L"test.txt";
 	name.copy(metadata.Name, name.length());
-	;
-
 	USN usn;
-
 	CreatePlaceHolder(L"C:\\Test\\Cloud", L"", metadata, usn);
+	// We got our USN
 
 	auto fullPath = L"C:\\Test\\Cloud\\test.txt";
 
@@ -47,9 +45,11 @@ int main()
 	}
 	USN tmpUsn;
 	tmpUsn = usn;
-	//tmpUsn = 0x0000017bc3f485e8;
+	
 	int state = 1;
+	// At this point USN is still valid.
 	hr = CfSetInSyncState(fileHandle, state == 0 ? CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_NOT_IN_SYNC : CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAGS::CF_SET_IN_SYNC_FLAG_NONE, &tmpUsn);
+	// Now the USN changed and the method failed.
 	if (hr != S_OK)
 	{
 	}
