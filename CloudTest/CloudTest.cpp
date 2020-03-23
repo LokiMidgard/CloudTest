@@ -45,7 +45,7 @@ int main()
 	}
 	USN tmpUsn;
 	tmpUsn = usn;
-	
+		
 	int state = 1;
 	// At this point USN is still valid.
 	hr = CfSetInSyncState(fileHandle, state == 0 ? CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_NOT_IN_SYNC : CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAGS::CF_SET_IN_SYNC_FLAG_NONE, &tmpUsn);
@@ -53,10 +53,6 @@ int main()
 	if (hr != S_OK)
 	{
 	}
-
-	state = 0;
-	hr = CfSetInSyncState(fileHandle, state == 0 ? CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_NOT_IN_SYNC : CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAGS::CF_SET_IN_SYNC_FLAG_NONE, &tmpUsn);
-
 
 	CfCloseHandle(fileHandle);
 
