@@ -8,11 +8,12 @@
 
 #include "Utilities.h"
 #include "CloudProviderRegistrar.h"
-
+#include <filesystem>
+#include <conio.h>
 
 CF_CONNECTION_KEY s_transferCallbackConnectionKey;
 HRESULT Init(std::wstring localRoot);
-HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _In_ FileMetaData& metadata, _Out_ USN& usn);
+HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _In_ std::wstring fileName, bool inSync, _Out_ USN& usn);
 void DisconnectSyncRootTransferCallbacks();
 void ConnectSyncRootTransferCallbacks(std::wstring localRoot);
 
@@ -20,45 +21,166 @@ void ConnectSyncRootTransferCallbacks(std::wstring localRoot);
 int main()
 {
 	CoInitialize(nullptr);
-	std::cout << "Hello World!\n";
+	std::cout << "Cloud sample test!\n";
 
 	Init(L"C:\\Test\\Cloud");
 
-	FileMetaData metadata = {};
 
-	metadata.FileSize = 0;
-	metadata.IsDirectory = false;
 
-	std::wstring name = L"test.txt";
-	name.copy(metadata.Name, name.length());
+	auto fullPath = L"C:\\Test\\Cloud\\test1.txt";
+	auto fullPath2 = L"C:\\Test\\Cloud\\test2.txt";
+	// cleanup previous run
+	if (std::filesystem::exists(fullPath)) {
+		int result = _wremove(fullPath);
+		if (result != 0) {
+			std::cout << "Failed to delete old file\n";
+
+			DisconnectSyncRootTransferCallbacks();
+			CoUninitialize();
+			_getch();
+			return result;
+		}
+	}
+	if (std::filesystem::exists(fullPath2)) {
+		int result = _wremove(fullPath2);
+		if (result != 0) {
+			std::cout << "Failed to delete old file2\n";
+
+			DisconnectSyncRootTransferCallbacks();
+			CoUninitialize();
+			_getch();
+			return result;
+		}
+	}
+
+	// SET IN SYNC
+	std::cout << "Try Set In Sync\n";
+	std::cout << "\n";
+
 	USN usn;
-	CreatePlaceHolder(L"C:\\Test\\Cloud", L"", metadata, usn);
+	auto hr = CreatePlaceHolder(L"C:\\Test\\Cloud", L"", L"test1.txt", false, usn);
 	// We got our USN
+	std::cout << "Created placeholder test1.txt with USN " << usn << ".\n";
 
-	auto fullPath = L"C:\\Test\\Cloud\\test.txt";
+	if (hr != S_OK) {
+		std::cout << "Failed to create placeholder\n";
+
+		DisconnectSyncRootTransferCallbacks();
+		CoUninitialize();
+		_getch();
+		return hr;
+	}
+
 
 	HANDLE fileHandle;
-	HRESULT hr = CfOpenFileWithOplock(fullPath, CF_OPEN_FILE_FLAGS::CF_OPEN_FILE_FLAG_WRITE_ACCESS, &fileHandle);
+	hr = CfOpenFileWithOplock(fullPath, CF_OPEN_FILE_FLAGS::CF_OPEN_FILE_FLAG_WRITE_ACCESS, &fileHandle);
 	if (S_OK != hr)
 	{
+		std::cout << "Failed to open file\n";
+
+		DisconnectSyncRootTransferCallbacks();
+		CoUninitialize();
+		_getch();
 		return hr;
 	}
 	USN tmpUsn;
 	tmpUsn = usn;
-		
-	int state = 1;
 	// At this point USN is still valid.
-	hr = CfSetInSyncState(fileHandle, state == 0 ? CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_NOT_IN_SYNC : CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAGS::CF_SET_IN_SYNC_FLAG_NONE, &tmpUsn);
+	std::cout << "Try to set Sync state IN_SYNC\n";
+	hr = CfSetInSyncState(fileHandle, CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAGS::CF_SET_IN_SYNC_FLAG_NONE, &tmpUsn);
 	// Now the USN changed and the method failed.
-	if (hr != S_OK)
-	{
+	if (hr == ERROR_CLOUD_FILE_NOT_IN_SYNC) {
+		std::cout << "Unable to set in sync with usn. Returned USN was " << tmpUsn << "\n";
 	}
+	else if (hr != S_OK)
+	{
+		std::cout << "Faild to set InSyncState\n";
+	}
+	else
+	{
+		std::cout << "Everything OK (will not be called).\n";
+	}
+
+	if (tmpUsn == usn) {
+		std::cout << "USN was NOT changed.\n";
+	}
+	else {
+		std::cout << "USN was changed now " << tmpUsn << ".\n";
+	}
+
 
 	CfCloseHandle(fileHandle);
 
 
+	std::cout << "\n";
+	std::cout << "\n";
+
+	// SET NOT IN SYNC
+	std::cout << "Try Set NOT In Sync\n";
+	std::cout << "\n";
+
+	hr = CreatePlaceHolder(L"C:\\Test\\Cloud", L"", L"test2.txt", true, usn);
+	std::cout << "Created placeholder test2.txt with USN " << usn << ".\n";
+
+	usn = -1;
+	std::cout << "setting USN variable to " << usn << " But will still work for NOT_IN_SYNC.\n";
+
+	// We got our USN
+
+	if (hr != S_OK) {
+		std::cout << "Failed to create placeholder\n";
+
+		DisconnectSyncRootTransferCallbacks();
+		CoUninitialize();
+		_getch();
+		return hr;
+	}
+
+
+	hr = CfOpenFileWithOplock(fullPath2, CF_OPEN_FILE_FLAGS::CF_OPEN_FILE_FLAG_WRITE_ACCESS, &fileHandle);
+	if (S_OK != hr)
+	{
+		std::cout << "Failed to open file\n";
+
+		DisconnectSyncRootTransferCallbacks();
+		CoUninitialize();
+		_getch();
+		return hr;
+	}
+
+	tmpUsn = usn;
+	// At this point USN is still valid.
+	hr = CfSetInSyncState(fileHandle, CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_NOT_IN_SYNC, CF_SET_IN_SYNC_FLAGS::CF_SET_IN_SYNC_FLAG_NONE, &tmpUsn);
+	// Now the USN changed and the method failed.
+	if (hr == ERROR_CLOUD_FILE_NOT_IN_SYNC) {
+		std::cout << "unable to set in sync with usn.\n";
+	}
+	else if (hr != S_OK)
+	{
+		std::cout << "Faild to set InSyncState\n";
+	}
+	else
+	{
+		std::cout << "Seting Sync state to NOT IN SYNC.\n";
+	}
+
+	if (tmpUsn == usn) {
+		std::cout << "USN was NOT changed.\n";
+	}
+	else {
+		std::cout << "USN was changed now " << tmpUsn << ".\n";
+	}
+
+
+	CfCloseHandle(fileHandle);
+
+
+
+
 	DisconnectSyncRootTransferCallbacks();
 	CoUninitialize();
+
+	_getch();
 }
 
 // Run program: Ctrl + F5 or Debug > Start Without Debugging menu
@@ -194,7 +316,7 @@ void DisconnectSyncRootTransferCallbacks()
 
 
 
-HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _In_ FileMetaData& metadata, _Out_ USN& usn)
+HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _In_ std::wstring fileName, bool inSync, _Out_ USN& usn)
 {
 	std::wstring relativePath(parentPath);
 	if (relativePath.size() > 0)
@@ -202,7 +324,14 @@ HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _
 		{
 			relativePath.append(L"\\");
 		}
-	relativePath.append(metadata.Name);
+	relativePath.append(fileName);
+
+	FileMetaData metadata = {};
+
+	metadata.FileSize = 0;
+	metadata.IsDirectory = false;
+
+	fileName.copy(metadata.Name, fileName.length());
 
 	CF_PLACEHOLDER_CREATE_INFO cloudEntry;
 	auto fileIdentety = L"F";
@@ -210,7 +339,9 @@ HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _
 	cloudEntry.FileIdentityLength = sizeof(fileIdentety);
 
 	cloudEntry.RelativeFileName = relativePath.data();
-	cloudEntry.Flags = CF_PLACEHOLDER_CREATE_FLAGS::CF_PLACEHOLDER_CREATE_FLAG_NONE;
+	cloudEntry.Flags = inSync
+		? CF_PLACEHOLDER_CREATE_FLAGS::CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC
+		: CF_PLACEHOLDER_CREATE_FLAGS::CF_PLACEHOLDER_CREATE_FLAG_NONE;
 	cloudEntry.FsMetadata.FileSize.QuadPart = metadata.FileSize;
 	cloudEntry.FsMetadata.BasicInfo.FileAttributes = metadata.FileAttributes;
 	cloudEntry.FsMetadata.BasicInfo.CreationTime = metadata.CreationTime;
