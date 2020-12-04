@@ -63,6 +63,7 @@ void CloudProviderRegistrar::RegisterWithShell(std::wstring localRoot, std::wstr
 		info.Context(contextBuffer);
 
 		winrt::IVector<winrt::StorageProviderItemPropertyDefinition> customStates = info.StorageProviderItemPropertyDefinitions();
+		
 		AddCustomState(customStates, L"Conflict", 1);
 		AddCustomState(customStates, L"CustomStateName2", 2);
 		AddCustomState(customStates, L"CustomStateName3", 3);

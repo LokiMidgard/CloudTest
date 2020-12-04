@@ -17,6 +17,8 @@
 #include <stdio.h>
 #include <tchar.h>
 #include <Unknwn.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/base.h>
 #include <shlwapi.h>
 #include <pathcch.h>

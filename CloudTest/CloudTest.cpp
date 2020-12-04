@@ -16,6 +16,7 @@ HRESULT Init(std::wstring localRoot);
 HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _In_ std::wstring fileName, bool inSync, _Out_ USN& usn);
 void DisconnectSyncRootTransferCallbacks();
 void ConnectSyncRootTransferCallbacks(std::wstring localRoot);
+HRESULT GetUSN(LPCWSTR path, _Out_ USN& usn);
 
 
 int main()
@@ -87,6 +88,13 @@ int main()
 	tmpUsn = usn;
 	// At this point USN is still valid.
 	std::cout << "Try to set Sync state IN_SYNC\n";
+
+	USN checkUSN;
+	GetUSN(fullPath, checkUSN);
+	std::cout << "Check USN is " << checkUSN << "\n";
+	GetUSN(fullPath, checkUSN);
+	std::cout << "Check again USN is " << checkUSN << "\n";
+
 	hr = CfSetInSyncState(fileHandle, CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAGS::CF_SET_IN_SYNC_FLAG_NONE, &tmpUsn);
 	// Now the USN changed and the method failed.
 	if (hr == ERROR_CLOUD_FILE_NOT_IN_SYNC) {
@@ -102,11 +110,14 @@ int main()
 	}
 
 	if (tmpUsn == usn) {
-		std::cout << "USN was NOT changed.\n";
+		std::cout << "USN parameter was NOT changed.\n";
 	}
 	else {
-		std::cout << "USN was changed now " << tmpUsn << ".\n";
+		std::cout << "USN parameter was changed now " << tmpUsn << ".\n";
 	}
+
+	GetUSN(fullPath, checkUSN);
+	std::cout << "Check FILE USN is " << checkUSN << "\n";
 
 
 	CfCloseHandle(fileHandle);
@@ -195,6 +206,58 @@ int main()
 //   6. In the future, to open this project again, go to File > Open > Project and select the .sln file
 
 
+HRESULT GetUSN(LPCWSTR path, _Out_ USN& usn) {
+#define BUF_LEN 1024
+	// ...
+
+	CHAR Buffer[BUF_LEN];
+	DWORD dwBytes;
+	HANDLE hFile = INVALID_HANDLE_VALUE;
+	USN_RECORD_V2* fUsn = NULL;
+
+	hFile = CreateFile(path,
+		GENERIC_READ | GENERIC_WRITE,
+		FILE_SHARE_READ | FILE_SHARE_WRITE,
+		NULL,
+		OPEN_EXISTING,
+		0,
+		NULL);
+
+	if (hFile == INVALID_HANDLE_VALUE)
+	{
+		printf("CreateFile failed (%d)\n", GetLastError());
+		return -1;
+	}
+
+	memset(Buffer, 0, BUF_LEN);
+
+	if (!DeviceIoControl(hFile,
+		FSCTL_READ_FILE_USN_DATA,
+		NULL,
+		0,
+		Buffer,
+		BUF_LEN,
+		&dwBytes,
+		NULL))
+	{
+		printf("Read journal failed (%d)\n", GetLastError());
+		return -2;
+	}
+
+	//printf("****************************************\n");
+
+	fUsn = (USN_RECORD_V2*)Buffer;
+	usn = fUsn->Usn;
+	//printf("USN: %I64x\n", fUsn->Usn);
+	//printf("File name: %.*S\n",
+	//	fUsn->FileNameLength / 2,
+	//	fUsn->FileName);
+	//printf("Reason: %x\n", fUsn->Reason);
+
+	CloseHandle(hFile);
+	return S_OK;
+}
+
 HRESULT Mount(std::wstring localRoot) {
 
 	// Stage 1: Setup
@@ -206,9 +269,9 @@ HRESULT Mount(std::wstring localRoot) {
 	concurrency::create_task([localRoot] {
 		// Register the provider with the shell so that the Sync Root shows up in File Explorer
 		CloudProviderRegistrar::RegisterWithShell(localRoot, L"FOO");
-	}).wait();
+		}).wait();
 
-	return S_OK;
+		return S_OK;
 }
 
 HRESULT IsSyncRoot(LPCWSTR path, _Out_ bool& isSyncRoot) {
