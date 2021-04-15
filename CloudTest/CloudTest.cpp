@@ -11,13 +11,26 @@
 #include <filesystem>
 #include <conio.h>
 
+
+#include <propkey.h>      // needed for ApplyTransferStateToFile
+#include <propvarutil.h>  // needed for ApplyTransferStateToFile
+
+
+#define TEXT_STATUS(status)(status == SYNC_TRANSFER_STATUS::STS_HASERROR \
+		? "SYNC_TRANSFER_STATUS::STS_HASERROR" \
+		: status == SYNC_TRANSFER_STATUS::STS_HASWARNING \
+		? "SYNC_TRANSFER_STATUS::STS_HASWARNING" \
+		: "normal") 
+
+
 CF_CONNECTION_KEY s_transferCallbackConnectionKey;
 HRESULT Init(std::wstring localRoot);
-HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _In_ std::wstring fileName, bool inSync, _Out_ USN& usn);
+HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _In_ std::wstring fileName, bool inSync, bool isFolder, _Out_ USN& usn);
 void DisconnectSyncRootTransferCallbacks();
 void ConnectSyncRootTransferCallbacks(std::wstring localRoot);
 HRESULT GetUSN(LPCWSTR path, _Out_ USN& usn);
-
+void SetTransferStatus(_In_ PCWSTR fullPath, _In_ SYNC_TRANSFER_STATUS status);
+SYNC_TRANSFER_STATUS  GetTransferStatus(_In_ PCWSTR fullPath);
 
 int main()
 {
@@ -28,7 +41,8 @@ int main()
 
 
 
-	auto fullPath = L"C:\\Test\\Cloud\\test1.txt";
+	auto fullPath = L"C:\\Test\\Cloud\\T\\test1.txt";
+	auto fullPathFolder = L"C:\\Test\\Cloud\\T";
 	auto fullPath2 = L"C:\\Test\\Cloud\\test2.txt";
 	// cleanup previous run
 	if (std::filesystem::exists(fullPath)) {
@@ -54,14 +68,37 @@ int main()
 		}
 	}
 
+	if (std::filesystem::exists(fullPathFolder)) {
+		if (!std::filesystem::remove(fullPathFolder)) {
+			auto error = GetLastError();
+			std::cout << "Failed to delete old folder\n";
+
+			DisconnectSyncRootTransferCallbacks();
+			CoUninitialize();
+			_getch();
+			return error;
+		}
+	}
+
 	// SET IN SYNC
 	std::cout << "Try Set In Sync\n";
 	std::cout << "\n";
 
 	USN usn;
-	auto hr = CreatePlaceHolder(L"C:\\Test\\Cloud", L"", L"test1.txt", false, usn);
+	auto hr = CreatePlaceHolder(L"C:\\Test\\Cloud", L"", L"T", true, true, usn);
+	std::cout << "Created folder T.\n";
+
+	if (hr != S_OK) {
+		std::cout << "Failed to create placeholder\n";
+
+		DisconnectSyncRootTransferCallbacks();
+		CoUninitialize();
+		_getch();
+		return hr;
+	}
+	hr = CreatePlaceHolder(L"C:\\Test\\Cloud", L"T", L"test1.txt", true, false, usn);
 	// We got our USN
-	std::cout << "Created placeholder test1.txt with USN " << usn << ".\n";
+	std::cout << "Created placeholder T/test1.txt with USN.\n";
 
 	if (hr != S_OK) {
 		std::cout << "Failed to create placeholder\n";
@@ -72,74 +109,20 @@ int main()
 		return hr;
 	}
 
-
-	HANDLE fileHandle;
-	hr = CfOpenFileWithOplock(fullPath, CF_OPEN_FILE_FLAGS::CF_OPEN_FILE_FLAG_WRITE_ACCESS, &fileHandle);
-	if (S_OK != hr)
-	{
-		std::cout << "Failed to open file\n";
-
-		DisconnectSyncRootTransferCallbacks();
-		CoUninitialize();
-		_getch();
-		return hr;
-	}
-	USN tmpUsn;
-	tmpUsn = usn;
-	// At this point USN is still valid.
-	std::cout << "Try to set Sync state IN_SYNC\n";
-
-	USN checkUSN;
-	GetUSN(fullPath, checkUSN);
-	std::cout << "Check USN is " << checkUSN << "\n";
-	GetUSN(fullPath, checkUSN);
-	std::cout << "Check again USN is " << checkUSN << "\n";
-
-	hr = CfSetInSyncState(fileHandle, CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAGS::CF_SET_IN_SYNC_FLAG_NONE, &tmpUsn);
-	// Now the USN changed and the method failed.
-	if (hr == ERROR_CLOUD_FILE_NOT_IN_SYNC) {
-		std::cout << "Unable to set in sync with usn. Returned USN was " << tmpUsn << "\n";
-	}
-	else if (hr != S_OK)
-	{
-		std::cout << "Faild to set InSyncState\n";
-	}
-	else
-	{
-		std::cout << "Everything OK (will not be called).\n";
-	}
-
-	if (tmpUsn == usn) {
-		std::cout << "USN parameter was NOT changed.\n";
-	}
-	else {
-		std::cout << "USN parameter was changed now " << tmpUsn << ".\n";
-	}
-
-	GetUSN(fullPath, checkUSN);
-	std::cout << "Check FILE USN is " << checkUSN << "\n";
-
-
-	CfCloseHandle(fileHandle);
-
-
 	std::cout << "\n";
 	std::cout << "\n";
 
-	// SET NOT IN SYNC
-	std::cout << "Try Set NOT In Sync\n";
-	std::cout << "\n";
+	HANDLE hfile = CreateFile(
+		fullPath2,
+		GENERIC_READ,
+		0,
+		NULL,
+		CREATE_NEW,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL);
 
-	hr = CreatePlaceHolder(L"C:\\Test\\Cloud", L"", L"test2.txt", true, usn);
-	std::cout << "Created placeholder test2.txt with USN " << usn << ".\n";
-
-	usn = -1;
-	std::cout << "setting USN variable to " << usn << " But will still work for NOT_IN_SYNC.\n";
-
-	// We got our USN
-
-	if (hr != S_OK) {
-		std::cout << "Failed to create placeholder\n";
+	if (!CloseHandle(hfile)) {
+		std::cout << "Failed to create file\n";
 
 		DisconnectSyncRootTransferCallbacks();
 		CoUninitialize();
@@ -148,50 +131,35 @@ int main()
 	}
 
 
-	hr = CfOpenFileWithOplock(fullPath2, CF_OPEN_FILE_FLAGS::CF_OPEN_FILE_FLAG_WRITE_ACCESS, &fileHandle);
-	if (S_OK != hr)
-	{
-		std::cout << "Failed to open file\n";
 
-		DisconnectSyncRootTransferCallbacks();
-		CoUninitialize();
-		_getch();
-		return hr;
-	}
+	auto old = GetTransferStatus(fullPath);
+	std::cout << "You should see a cloud symbol now if this is the first time you execute this.\n";
+	std::cout << "If you run this a seccond time you may now need to hit F5 in the explorer you will see the " <<
+		TEXT_STATUS(old) << " again.\n";
+	std::cout << "The previous icon is displayed even the file was deleted and a new file was created.\n";
+	std::cout << "The error is set on the file but only the folder showes the error, the file still keep the cloud symbol.\n";
+	std::cout << "\nPress key to continue\n";
 
-	tmpUsn = usn;
-	// At this point USN is still valid.
-	hr = CfSetInSyncState(fileHandle, CF_IN_SYNC_STATE::CF_IN_SYNC_STATE_NOT_IN_SYNC, CF_SET_IN_SYNC_FLAGS::CF_SET_IN_SYNC_FLAG_NONE, &tmpUsn);
-	// Now the USN changed and the method failed.
-	if (hr == ERROR_CLOUD_FILE_NOT_IN_SYNC) {
-		std::cout << "unable to set in sync with usn.\n";
-	}
-	else if (hr != S_OK)
-	{
-		std::cout << "Faild to set InSyncState\n";
-	}
-	else
-	{
-		std::cout << "Seting Sync state to NOT IN SYNC.\n";
-	}
-
-	if (tmpUsn == usn) {
-		std::cout << "USN was NOT changed.\n";
-	}
-	else {
-		std::cout << "USN was changed now " << tmpUsn << ".\n";
-	}
+	_getch();
 
 
-	CfCloseHandle(fileHandle);
+	auto newValue = old != SYNC_TRANSFER_STATUS::STS_HASERROR ? SYNC_TRANSFER_STATUS::STS_HASERROR : SYNC_TRANSFER_STATUS::STS_HASWARNING;
+	SetTransferStatus(fullPath, newValue);
+
+	std::cout << "The icon should now be" <<
+		TEXT_STATUS(newValue) << ".\n";
 
 
+	SetTransferStatus(fullPath2, SYNC_TRANSFER_STATUS::STS_EXCLUDED);
+	std::cout << "Error was set, but the file T/test1.txt still has cloud symbol.\n";
+	std::cout << "\nPress key to exit\n";
+
+
+	_getch();
 
 
 	DisconnectSyncRootTransferCallbacks();
 	CoUninitialize();
-
-	_getch();
 }
 
 // Run program: Ctrl + F5 or Debug > Start Without Debugging menu
@@ -206,57 +174,8 @@ int main()
 //   6. In the future, to open this project again, go to File > Open > Project and select the .sln file
 
 
-HRESULT GetUSN(LPCWSTR path, _Out_ USN& usn) {
-#define BUF_LEN 1024
-	// ...
 
-	CHAR Buffer[BUF_LEN];
-	DWORD dwBytes;
-	HANDLE hFile = INVALID_HANDLE_VALUE;
-	USN_RECORD_V2* fUsn = NULL;
 
-	hFile = CreateFile(path,
-		GENERIC_READ | GENERIC_WRITE,
-		FILE_SHARE_READ | FILE_SHARE_WRITE,
-		NULL,
-		OPEN_EXISTING,
-		0,
-		NULL);
-
-	if (hFile == INVALID_HANDLE_VALUE)
-	{
-		printf("CreateFile failed (%d)\n", GetLastError());
-		return -1;
-	}
-
-	memset(Buffer, 0, BUF_LEN);
-
-	if (!DeviceIoControl(hFile,
-		FSCTL_READ_FILE_USN_DATA,
-		NULL,
-		0,
-		Buffer,
-		BUF_LEN,
-		&dwBytes,
-		NULL))
-	{
-		printf("Read journal failed (%d)\n", GetLastError());
-		return -2;
-	}
-
-	//printf("****************************************\n");
-
-	fUsn = (USN_RECORD_V2*)Buffer;
-	usn = fUsn->Usn;
-	//printf("USN: %I64x\n", fUsn->Usn);
-	//printf("File name: %.*S\n",
-	//	fUsn->FileNameLength / 2,
-	//	fUsn->FileName);
-	//printf("Reason: %x\n", fUsn->Reason);
-
-	CloseHandle(hFile);
-	return S_OK;
-}
 
 HRESULT Mount(std::wstring localRoot) {
 
@@ -359,40 +278,93 @@ void DisconnectSyncRootTransferCallbacks()
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _In_ std::wstring fileName, bool inSync, _Out_ USN& usn)
+void SetTransferStatus(_In_ PCWSTR fullPath, _In_ SYNC_TRANSFER_STATUS status)
 {
-	std::wstring relativePath(parentPath);
+	// Tell the Shell so File Explorer can display the progress bar in its view
+	try
+	{
+		// First, get the Volatile property store for the file. That's where the properties are maintained.
+		winrt::com_ptr<IShellItem2> shellItem;
+		winrt::check_hresult(SHCreateItemFromParsingName(fullPath, nullptr, __uuidof(shellItem), shellItem.put_void()));
+
+		winrt::com_ptr<IPropertyStore> propStoreVolatile;
+		winrt::check_hresult(
+			shellItem->GetPropertyStore(
+				GETPROPERTYSTOREFLAGS::GPS_READWRITE | GETPROPERTYSTOREFLAGS::GPS_VOLATILEPROPERTIESONLY,
+				__uuidof(propStoreVolatile),
+				propStoreVolatile.put_void()));
+
+		// Set the sync transfer status accordingly
+		PROPVARIANT transferStatus;
+		winrt::check_hresult(
+			InitPropVariantFromUInt32(
+				status,
+				&transferStatus));
+		winrt::check_hresult(propStoreVolatile->SetValue(PKEY_SyncTransferStatus, transferStatus));
+
+		// Without this, all your hard work is wasted.
+		winrt::check_hresult(propStoreVolatile->Commit());
+
+		// Broadcast a notification that something about the file has changed, so that apps
+		// who subscribe (such as File Explorer) can update their UI to reflect the new progress
+		SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATH, static_cast<LPCVOID>(fullPath), nullptr);
+
+		//wprintf(L"Succesfully Set Transfer Progress on \"%s\" to %llu/%llu\n", fullPath, completed, total);
+	}
+	catch (...)
+	{
+		// winrt::to_hresult() will eat the exception if it is a result of winrt::check_hresult,
+		// otherwise the exception will get rethrown and this method will crash out as it should
+		wprintf(L"Failed to Set Transfer Progress on \"%s\" with %08x\n", fullPath, static_cast<HRESULT>(winrt::to_hresult()));
+	}
+}
+
+SYNC_TRANSFER_STATUS  GetTransferStatus(_In_ PCWSTR fullPath)
+{
+	// Tell the Shell so File Explorer can display the progress bar in its view
+	try
+	{
+		// First, get the Volatile property store for the file. That's where the properties are maintained.
+		winrt::com_ptr<IShellItem2> shellItem;
+		winrt::check_hresult(SHCreateItemFromParsingName(fullPath, nullptr, __uuidof(shellItem), shellItem.put_void()));
+
+		winrt::com_ptr<IPropertyStore> propStoreVolatile;
+		winrt::check_hresult(
+			shellItem->GetPropertyStore(
+				GETPROPERTYSTOREFLAGS::GPS_READWRITE | GETPROPERTYSTOREFLAGS::GPS_VOLATILEPROPERTIESONLY,
+				__uuidof(propStoreVolatile),
+				propStoreVolatile.put_void()));
+
+		// Set the sync transfer status accordingly
+		PROPVARIANT transferStatus;
+		winrt::check_hresult(propStoreVolatile->GetValue(PKEY_SyncTransferStatus, &transferStatus));
+
+		SYNC_TRANSFER_STATUS result = (SYNC_TRANSFER_STATUS)(transferStatus.uintVal);
+		return result;
+	}
+	catch (...)
+	{
+		// winrt::to_hresult() will eat the exception if it is a result of winrt::check_hresult,
+		// otherwise the exception will get rethrown and this method will crash out as it should
+		wprintf(L"Failed to Set Transfer Progress on \"%s\" with %08x\n", fullPath, static_cast<HRESULT>(winrt::to_hresult()));
+	}
+}
+
+
+HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _In_ std::wstring fileName, bool inSync, bool isFolder, _Out_ USN& usn)
+{
+	std::wstring relativePath(localRoot);
 	if (relativePath.size() > 0)
 		if (relativePath.at(relativePath.size() - 1) != L'\\')
 		{
 			relativePath.append(L"\\");
 		}
-	relativePath.append(fileName);
+	relativePath.append(parentPath);
 
 	FileMetaData metadata = {};
 
 	metadata.FileSize = 0;
-	metadata.IsDirectory = false;
+	metadata.IsDirectory = isFolder;
 
 	fileName.copy(metadata.Name, fileName.length());
 
@@ -401,7 +373,7 @@ HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _
 	cloudEntry.FileIdentity = &fileIdentety;
 	cloudEntry.FileIdentityLength = sizeof(fileIdentety);
 
-	cloudEntry.RelativeFileName = relativePath.data();
+	cloudEntry.RelativeFileName = fileName.c_str();
 	cloudEntry.Flags = inSync
 		? CF_PLACEHOLDER_CREATE_FLAGS::CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC
 		: CF_PLACEHOLDER_CREATE_FLAGS::CF_PLACEHOLDER_CREATE_FLAG_NONE;
@@ -412,6 +384,8 @@ HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _
 	cloudEntry.FsMetadata.BasicInfo.LastAccessTime = metadata.LastAccessTime;
 	cloudEntry.FsMetadata.BasicInfo.ChangeTime = metadata.ChangeTime;
 
+
+
 	if (metadata.IsDirectory)
 	{
 		cloudEntry.FsMetadata.BasicInfo.FileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
@@ -419,19 +393,11 @@ HRESULT CreatePlaceHolder(_In_ std::wstring localRoot, _In_ PCWSTR parentPath, _
 		cloudEntry.FsMetadata.FileSize.QuadPart = 0;
 	}
 
-	auto hr = CfCreatePlaceholders(localRoot.c_str(), &cloudEntry, 1, CF_CREATE_FLAGS::CF_CREATE_FLAG_NONE, NULL);
+	auto hr = CfCreatePlaceholders(relativePath.c_str(), &cloudEntry, 1, CF_CREATE_FLAGS::CF_CREATE_FLAG_NONE, NULL);
 	if (hr != S_OK) {
 		return hr;
 	}
 
-
-
-	//std::wstring absolutePath(>localRoot);
-	//if (absolutePath.size() > 0 && absolutePath.at(absolutePath.size() - 1) != L'\\')
-	//	absolutePath.append(L"\\");
-
-	//absolutePath.append(relativePath);
-	//DWORD attrib = GetFileAttributes(absolutePath.c_str());
 	usn = cloudEntry.CreateUsn;
 	return cloudEntry.Result;
 }

@@ -21,8 +21,8 @@
 //
 //===============================================================
 
-#define STORAGE_PROVIDER_ID L"CLOUDTEST"
-#define STORAGE_PROVIDER_ACCOUNT L"TestAccount1"
+#define STORAGE_PROVIDER_ID L"CLOUDTEST2"
+#define STORAGE_PROVIDER_ACCOUNT L"TestAccount2"
 
 void CloudProviderRegistrar::RegisterWithShell(std::wstring localRoot, std::wstring syncFolderName)
 {
